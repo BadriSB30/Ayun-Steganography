@@ -18,6 +18,22 @@ from tabs import EmbedTab, ExtractTab, CompareTab
 
 
 # ─────────────────────────────────────────────
+#   RESOURCE PATH HELPER
+# ─────────────────────────────────────────────
+
+def resource_path(relative: str) -> str:
+    """
+    Kembalikan path absolut ke file aset.
+
+    - Saat dijalankan dari source  : path relatif terhadap direktori main.py
+    - Saat dijalankan dari build   : PyInstaller mengekstrak semua aset ke
+      folder sementara sys._MEIPASS, sehingga path harus mengarah ke sana.
+    """
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
+
+
+# ─────────────────────────────────────────────
 #   HEADER WIDGET
 # ─────────────────────────────────────────────
 
@@ -57,7 +73,7 @@ class AppHeader(QWidget):
         layout.addStretch()
 
         # Badge versi
-        ver = QLabel("v1.0")
+        ver = QLabel("Ayun - v1.0.0")
         ver.setStyleSheet(
             f"color: {COLORS['text_dim']}; font-size: 10px;"
             f" letter-spacing: 2px; background: transparent;"
@@ -81,15 +97,15 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Steganography — Sembunyikan Teks di Dalam Foto")
+        self.setWindowTitle("Ayun — Steganography")
         self.setMinimumSize(1100, 720)
         self.resize(1280, 800)
 
         # Stylesheet global
         self.setStyleSheet(APP_STYLESHEET)
 
-        # Set window icon
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "favicon.ico")
+        # Set window icon — gunakan resource_path agar bekerja di source & build
+        icon_path = resource_path("favicon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
@@ -154,8 +170,8 @@ def main():
     app.setApplicationName("Steganography")
     app.setOrganizationName("StegApp")
 
-    # Set application-wide icon (taskbar, dock, dll)
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "favicon.ico")
+    # Set application-wide icon — gunakan resource_path agar bekerja di source & build
+    icon_path = resource_path("favicon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 

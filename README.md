@@ -96,3 +96,52 @@ Menggunakan **LSB (Least Significant Bit)** via library `stegano`:
 - Folder `.venv` tidak perlu di-commit ke Git — tambahkan `.venv/` ke `.gitignore`
 - Gunakan gambar berukuran cukup besar untuk pesan panjang
 - Format output harus PNG (tidak JPEG, karena JPEG lossy dapat merusak data tersembunyi)
+
+---
+
+## Build — Compile ke Executable
+
+Gunakan **PyInstaller** yang sudah termasuk di `requirements.txt`.
+
+### Kenapa `--add-data` wajib disertakan?
+
+Saat `--onefile`, PyInstaller mengekstrak semua file ke folder sementara
+`sys._MEIPASS` di runtime — **bukan** di samping `.exe`. Tanpa `--add-data`,
+`favicon.ico` tidak ikut terbundle dan icon tidak muncul.
+
+`main.py` sudah menggunakan fungsi `resource_path()` yang otomatis mengarah
+ke `sys._MEIPASS` saat berjalan dari build, dan ke folder proyek saat
+berjalan dari source.
+
+### Perintah Build
+
+**Windows** — menghasilkan `.exe` satu file:
+
+```bash
+pyinstaller --noconfirm --onefile --windowed --icon=favicon.ico --add-data "favicon.ico;." --name=Steganography main.py
+```
+
+**macOS / Linux** — menghasilkan binary satu file:
+
+```bash
+pyinstaller --noconfirm --onefile --windowed --icon=favicon.ico --add-data "favicon.ico:." --name=Steganography main.py
+```
+
+> Hasil build ada di folder `dist/Steganography.exe` (Windows) atau `dist/Steganography` (macOS/Linux).
+
+### Penjelasan Flag
+
+| Flag                         | Keterangan                                                                                                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `--onefile`                  | Semua dependensi dikemas dalam **satu file** executable                                                           |
+| `--windowed`                 | Jalankan tanpa jendela terminal/console (mode GUI)                                                                |
+| `--icon=favicon.ico`         | Icon pada file `.exe` di File Explorer / Finder                                                                   |
+| `--add-data "favicon.ico;."` | **Bundel** `favicon.ico` ke dalam `.exe` agar icon muncul saat runtime (Windows pakai `;`, macOS/Linux pakai `:`) |
+| `--name=Steganography`       | Nama file output                                                                                                  |
+| `--noconfirm`                | Timpa folder `dist/` tanpa konfirmasi                                                                             |
+
+### Membersihkan Hasil Build
+
+```bash
+rm -rf build/ dist/ Steganography.spec
+```
