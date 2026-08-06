@@ -1,6 +1,7 @@
 """
 steg_functions.py - Fungsi-fungsi inti steganography dan manipulasi gambar
 Mendukung LSB untuk Gambar dan EOF (End of File) Injection untuk Audio/Video.
+Dilengkapi Uji Chi-Square untuk deteksi forensik LSB yang akurat.
 """
 
 import os
@@ -8,7 +9,6 @@ import io
 from PIL import Image
 import numpy as np
 
-# Cek ketersediaan library pihak ketiga untuk steganografi cepat
 try:
     from stegano import lsb
     STEGANO_AVAILABLE = True
@@ -24,7 +24,7 @@ MAGIC_END = b"::CYBER_STEG_END::"
 # ─────────────────────────────────────────────
 
 def get_multimedia_info(path: str) -> dict:
-    """Mengekstrak metadata tanpa memicu error jika target adalah video/audio."""
+    """Mengekstrak metadata tanpa memicu error jika target adalah video/audio[cite: 13]."""
     if not os.path.exists(path):
         raise FileNotFoundError(f"File tidak ditemukan: {path}")
         
@@ -43,13 +43,12 @@ def get_multimedia_info(path: str) -> dict:
             "is_image": True
         }
     else:
-        # Pendekatan untuk file Audio / Video
         return {
             "filename": filename,
             "type": "Audio/Video",
             "format": ext[1:].upper(),
             "file_size": _format_size(file_size),
-            "max_chars": 9999999, # EOF secara teoritis tidak memiliki batas kecuali ruang disk
+            "max_chars": 9999999,
             "is_image": False
         }
 
@@ -71,7 +70,7 @@ def convert_to_png(input_path: str, output_path: str) -> str:
 
 
 # ─────────────────────────────────────────────
-#   METODE 1: STEGANOGRAPHY GAMBAR (LSB)
+#   STEGANOGRAPHY GAMBAR (LSB) & EOF AUDIO/VIDEO
 # ─────────────────────────────────────────────
 
 def embed_text_lsb(image_path: str, secret_text: str, output_path: str) -> dict:
@@ -113,64 +112,75 @@ def extract_text_lsb(image_path: str) -> dict:
     except Exception as e:
         return {"status": "error", "message": "File rusak/format tak dikenali", "text": None, "image_info": info, "error": str(e)}
 
-
-# ─────────────────────────────────────────────
-#   METODE 2: STEGANOGRAPHY AUDIO/VIDEO (EOF)
-# ─────────────────────────────────────────────
-
 def embed_eof_multimedia(file_path: str, secret_text: str, output_path: str) -> dict:
-    """Menginjeksi data pada akhir struktur hex video/audio (End of File)."""
     if not secret_text.strip():
         raise ValueError("Teks rahasia tidak boleh kosong.")
-        
     text_bytes = secret_text.encode("utf-8")
-    
     with open(file_path, "rb") as f:
         original_data = f.read()
-        
     with open(output_path, "wb") as f:
         f.write(original_data)
         f.write(MAGIC_START)
         f.write(text_bytes)
         f.write(MAGIC_END)
-        
     return {
-        "status": "success",
-        "message": "Teks ditanam via End of File (EOF).",
-        "output_path": output_path,
-        "chars_hidden": len(secret_text),
+        "status": "success", "message": "Teks ditanam via End of File (EOF).",
+        "output_path": output_path, "chars_hidden": len(secret_text),
         "image_info": get_multimedia_info(output_path)
     }
 
 def extract_eof_multimedia(file_path: str) -> dict:
-    """Membaca stempel MAGIC_START dan MAGIC_END pada EOF video/audio."""
     info = get_multimedia_info(file_path)
     with open(file_path, "rb") as f:
         content = f.read()
-        
     start_idx = content.rfind(MAGIC_START)
     end_idx = content.rfind(MAGIC_END)
-    
     if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
         data_bytes = content[start_idx + len(MAGIC_START):end_idx]
-        return {
-            "status": "success",
-            "message": "Pesan ditemukan (EOF)!",
-            "text": data_bytes.decode("utf-8", errors="ignore"),
-            "image_info": info
-        }
-        
+        return {"status": "success", "message": "Pesan ditemukan (EOF)!", "text": data_bytes.decode("utf-8", errors="ignore"), "image_info": info}
+    return {"status": "not_found", "message": "Tidak ditemukan anomali EOF.", "text": None, "image_info": info}
+
+
+# ─────────────────────────────────────────────
+#   ANALISIS FORENSIK AKURAT (CHI-SQUARE ATTACK)
+# ─────────────────────────────────────────────
+
+def analyze_image_lsb(image_path: str) -> dict:
+    """
+    Analisis Forensik LSB menggunakan Uji Chi-Square (Pair Analysis).
+    Mengatasi false positive dengan menguji keseragaman statistik pasangan nilai piksel (2k, 2k+1).
+    """
+    img = Image.open(image_path).convert("L") # Ubah ke grayscale
+    arr = np.array(img, dtype=np.int32)
+    
+    hist, _ = np.histogram(arr, bins=256, range=(0, 256))
+    
+    chi2_sum = 0.0
+    valid_pairs = 0
+    
+    for k in range(0, 256, 2):
+        n1 = hist[k]
+        n2 = hist[k+1]
+        expected = (n1 + n2) / 2.0
+        if expected > 0:
+            chi2_sum += ((n1 - expected) ** 2) / expected + ((n2 - expected) ** 2) / expected
+            valid_pairs += 1
+            
+    # Ambang batas adaptif berdasarkan ukuran gambar
+    total_pixels = arr.size
+    threshold = total_pixels * 0.002 # Gambar natural memiliki chi2 jauh di atas nilai ini
+    
+    is_suspicious = chi2_sum < threshold
+    rgb_img = Image.open(image_path).convert("RGB")
+    lsb_ratio = float((np.array(rgb_img) & 1).mean())
+
     return {
-        "status": "not_found",
-        "message": "Tidak ditemukan anomali EOF.",
-        "text": None,
-        "image_info": info
+        "lsb_ratio": lsb_ratio,
+        "chi2_stat": float(chi2_sum),
+        "is_suspicious": is_suspicious,
+        "verdict": "[!] Anomali Ditemukan: Ditemukan keseragaman statistik LSB (Indikasi Injeksi)" if is_suspicious
+                   else "[✓] Normal: Distribusi LSB alami dan bervariasi",
     }
-
-
-# ─────────────────────────────────────────────
-#   ANALISIS FORENSIK (HANYA GAMBAR)
-# ─────────────────────────────────────────────
 
 def compare_images(path1: str, path2: str) -> dict:
     img1 = np.array(Image.open(path1).convert("RGB"), dtype=np.float64)

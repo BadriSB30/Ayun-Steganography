@@ -1,6 +1,7 @@
 """
 tabs.py - Panel tab untuk operasi Embed, Extract, dan Forensik
 Validasi ketat: Fitur Analisis Forensik & Komparasi Piksel eksklusif untuk format Gambar.
+Log aktivitas sistem diperbarui agar lebih informatif dan detail.
 """
 
 import os
@@ -133,8 +134,19 @@ class EmbedTab(QWidget):
             })
             self._update_char_count()
             self.status_bar.set_status("info", f"Carrier: {info['filename']}")
+            
+            # Evaluasi string kapasitas terlebih dahulu agar terhindar dari error f-string
+            if info["is_image"]:
+                cap_text = f"Maksimal {info['max_chars']:,} Karakter (LSB)"
+            else:
+                cap_text = "Tanpa Batas (EOF)"
+
+            self._log(f"[FILE LOADED] Berhasil memuat {info['type']}")
+            self._log(f" ├─ Nama Berkas : {info['filename']}")
+            self._log(f" ├─ Ukuran File : {info['file_size']}")
+            self._log(f" └─ Kapasitas   : {cap_text}")
         except Exception as e:
-            self._log(f"[FATAL] ERROR: {e}", error=True)
+            self._log(f"[FATAL ERROR] Gagal membaca metadata: {e}", error=True)
 
     def _clear_file(self):
         self._source_path = None
@@ -142,6 +154,7 @@ class EmbedTab(QWidget):
         self.info_panel.clear()
         self.lbl_chars.setText("0 Bytes")
         self.status_bar.set_status("idle", "STANDBY")
+        self._log("[RESET] Area kerja dibersihkan.")
 
     def _update_char_count(self):
         text = self.text_input.toPlainText()
@@ -150,9 +163,15 @@ class EmbedTab(QWidget):
     def _run_embed(self):
         if not self._source_path:
             self.status_bar.set_status("error", "Carrier belum dipilih!")
+            self._log("[WARNING] Proses dibatalkan: File carrier belum dipilih.", error=True)
             return
             
         text = self.text_input.toPlainText()
+        if not text.strip():
+            self.status_bar.set_status("error", "Payload kosong!")
+            self._log("[WARNING] Proses dibatalkan: Teks payload masih kosong.", error=True)
+            return
+
         info = sf.get_multimedia_info(self._source_path)
         base, ext = os.path.splitext(self._source_path)
         
@@ -161,12 +180,19 @@ class EmbedTab(QWidget):
 
         if info.get("is_image", True):
             self._output_path = base + "_steg.png"
+            method_desc = "LSB (Least Significant Bit) pada Piksel Gambar"
             self.status_bar.set_status("working", "Memproses LSB (Gambar)...")
             self._worker = WorkerThread(sf.embed_text_lsb, self._source_path, text, self._output_path)
         else:
             self._output_path = base + "_steg" + ext
+            method_desc = f"EOF (End of File) Injection pada {info['type']}"
             self.status_bar.set_status("working", f"Memproses EOF ({info['type']})...")
             self._worker = WorkerThread(sf.embed_eof_multimedia, self._source_path, text, self._output_path)
+
+        self._log(f"[INIT] Memulai proses penyembunyian data...")
+        self._log(f" ├─ Metode Injeksi : {method_desc}")
+        self._log(f" ├─ Ukuran Payload : {len(text):,} Karakter / Bytes")
+        self._log(f" └─ Target Output  : {os.path.basename(self._output_path)}")
 
         self._worker.result_ready.connect(self._on_embed_done)
         self._worker.error_occurred.connect(self._on_embed_error)
@@ -180,15 +206,20 @@ class EmbedTab(QWidget):
             self.status_bar.set_status("success", "Injeksi Berhasil!")
             self.preview_out.set_image(self._output_path)
             self.btn_save.setEnabled(True)
-            self._log(f"[✓] Data tertanam pada {result['image_info']['type']}.")
+            
+            self._log(f"[SUCCESS] Injeksi data berhasil diselesaikan!")
+            self._log(f" ├─ Tipe Media    : {result['image_info']['type']}")
+            self._log(f" ├─ Karakter Hidden: {result.get('chars_hidden', 0):,} Bytes")
+            self._log(f" └─ Status File   : Siap untuk diekspor/disimpan.")
         else:
             self._on_embed_error(result.get("message", "Error tidak diketahui"))
         QTimer.singleShot(3000, lambda: self.progress.setValue(0))
 
     def _on_embed_error(self, error_msg: str):
         self.btn_embed.setEnabled(True)
+        self.progress.setValue(0)
         self.status_bar.set_status("error", "Injeksi Gagal")
-        self._log(f"[✗] ERROR: {error_msg}", error=True)
+        self._log(f"[ERROR FAILED] {error_msg}", error=True)
 
     def _save_output(self):
         if not self._output_path or not os.path.exists(self._output_path): return
@@ -199,10 +230,12 @@ class EmbedTab(QWidget):
             import shutil
             shutil.copy2(self._output_path, path)
             self.status_bar.set_status("success", "Tersimpan")
+            self._log(f"[EXPORT] Berkas berhasil disimpan ke direktori:")
+            self._log(f" └─ {path}")
 
     def _log(self, message: str, error: bool = False):
         color = "#EF4444" if error else "#0EA5E9"
-        self.log_area.append(f'<span style="color:{color};">{message}</span>')
+        self.log_area.append(f'<span style="color:{color}; font-family:Consolas;">{message}</span>')
 
 
 class ExtractTab(QWidget):
@@ -242,15 +275,14 @@ class ExtractTab(QWidget):
         self.output_area.setObjectName("output_area")
         right.addWidget(self.output_area)
 
-        # Widget Analisis LSB Cepat (Khusus Gambar)
-        analyze_group = QGroupBox("Inspeksi Forensik LSB (Khusus Gambar)")
+        analyze_group = QGroupBox("Inspeksi Forensik Chi-Square (Khusus Gambar)")
         al_layout = QVBoxLayout(analyze_group)
         self.analyze_area = QTextEdit()
         self.analyze_area.setObjectName("output_area")
         self.analyze_area.setReadOnly(True)
         self.analyze_area.setFixedHeight(75)
         al_layout.addWidget(self.analyze_area)
-        self.btn_analyze = QPushButton("Pemindaian LSB")
+        self.btn_analyze = QPushButton("Pemindaian Chi-Square")
         self.btn_analyze.clicked.connect(self._run_analyze)
         al_layout.addWidget(self.btn_analyze)
         right.addWidget(analyze_group)
@@ -296,9 +328,8 @@ class ExtractTab(QWidget):
     def _run_analyze(self):
         if not self._image_path: return
         info = sf.get_multimedia_info(self._image_path)
-        # VALIDASI KETAT: Jika bukan gambar, tolak!
         if not info.get("is_image", False):
-            self.analyze_area.setPlainText("[!] PERINGATAN: Analisis LSB hanya dapat dilakukan pada file Gambar (PNG/JPG/WEBP). Audio/Video tidak memiliki piksel.")
+            self.analyze_area.setPlainText("[!] PERINGATAN: Analisis Chi-Square hanya dapat dilakukan pada file Gambar (PNG/JPG/WEBP).")
             return
 
         self._worker = WorkerThread(sf.analyze_image_lsb, self._image_path)
@@ -307,8 +338,8 @@ class ExtractTab(QWidget):
 
     def _on_analyze_done(self, result: dict):
         lines = [
+            f"> Chi2 Stat   : {result['chi2_stat']:.2f}",
             f"> LSB Ratio   : {result['lsb_ratio']:.4f}",
-            f"> Deviasi     : {result['deviation']:.4f}",
             f"> Status      : {result['verdict']}",
         ]
         self.analyze_area.setPlainText("\n".join(lines))
@@ -381,13 +412,12 @@ class CompareTab(QWidget):
             self._load_img(which, path)
 
     def _load_img(self, which: str, path: str):
-        # VALIDASI KETAT: Tolak file jika bukan gambar
         info = sf.get_multimedia_info(path)
         if not info.get("is_image", False):
             self.result_area.setPlainText(
                 f"[!] PERINGATAN PENOLAKAN BERKAS:\n"
                 f"File '{info['filename']}' berformat ({info['type']}).\n"
-                f"Fitur Analisis Forensik & Komparasi Piksel HANYA DAPAT MEMPROSES FILE GAMBAR (PNG, JPG, BMP, WEBP)!"
+                f"Fitur Analisis Forensik & Komparasi Piksel HANYA DAPAT MEMPROSES FILE GAMBAR!"
             )
             return
 
@@ -410,8 +440,8 @@ class CompareTab(QWidget):
                 return
 
             lines = [
-                f"> MSE (Mean Squared Error) : {result['mse']:.6f}  (Mendekati 0 berarti identik)",
-                f"> PSNR Ratio               : {result['psnr']:.2f} dB (Di atas 40 dB = sangat baik / tak terlihat mata)",
+                f"> MSE (Mean Squared Error) : {result['mse']:.6f}",
+                f"> PSNR Ratio               : {result['psnr']:.2f} dB",
                 f"> Piksel Termanipulasi     : {result['changed_pixels']:,} dari {result['total_pixels']:,} total piksel",
                 f"> Tingkat Perubahan File   : {result['change_percent']}%",
                 f"> Estimasi Kualitas        : {result['quality']}",
